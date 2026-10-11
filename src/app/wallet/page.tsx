@@ -5,7 +5,17 @@ import { useState, useEffect, useRef } from "react";
 const USDT_CONTRACT = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
 const ETH_CHAIN_ID = "0x1";
 
-import type { EthereumProvider } from "@/types/global";
+interface EthereumProvider {
+  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+  on?: (event: string, handler: (...args: unknown[]) => void) => void;
+}
+declare global {
+  interface Window {
+    ethereum?: EthereumProvider;
+    trustwallet?: { ethereum?: EthereumProvider };
+  }
+}
+
 function getProviderNow(): EthereumProvider | null {
   if (window.trustwallet?.ethereum) return window.trustwallet.ethereum;
   if (window.ethereum) return window.ethereum;
